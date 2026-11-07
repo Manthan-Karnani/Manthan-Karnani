@@ -3,5 +3,5 @@
 </p>
 
 <p align="center">
-  Java Backend • Spring Boot • DevOps • Agentic AI
+  Java Backend 
 </p>
