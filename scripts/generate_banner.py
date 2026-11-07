@@ -9,9 +9,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 WIDTH, HEIGHT, SCALE = 1000, 300, 2
-FPS, SECONDS = 20, 8
+FPS, SECONDS = 20, 12
 GREETING = "Hey, I'm Manthan!"
-TYPE_START, LETTER_TIME, HOLD_TIME, ERASE_TIME = 0.3, 0.18, 2.4, 0.09
+# Brief, irregular brightness dips give the complete greeting a neon flicker.
+FLICKERS = [(0.85, 0.10, 0.55), (1.05, 0.05, 0.72), (3.40, 0.10, 0.65),
+            (5.80, 0.05, 0.50), (5.95, 0.10, 0.70), (8.30, 0.15, 0.62),
+            (10.65, 0.05, 0.55), (10.80, 0.10, 0.75)]
 
 
 def font(name, size):
@@ -28,16 +31,12 @@ def font(name, size):
 SANS, MONO, SMALL, ROLE = font("sans", 18), font("mono", 45), font("sans", 14), font("sans", 21)
 
 
-def visible_characters(time):
-    typed_at = TYPE_START + len(GREETING) * LETTER_TIME
-    erase_at = typed_at + HOLD_TIME
-    if time < TYPE_START:
-        return 0
-    if time < typed_at:
-        return min(len(GREETING), int((time - TYPE_START) / LETTER_TIME))
-    if time < erase_at:
-        return len(GREETING)
-    return max(0, len(GREETING) - int((time - erase_at) / ERASE_TIME))
+def greeting_brightness(time):
+    time %= SECONDS
+    for start, duration, brightness in FLICKERS:
+        if start <= time < start + duration:
+            return brightness
+    return 0.97 + 0.03 * math.cos(math.tau * time / SECONDS)
 
 
 def background():
@@ -62,9 +61,11 @@ def background():
     return image
 
 
-def petal_shape():
+def leaf_shape():
+    # A tapered almond outline has pointed ends instead of a heart's lobes.
     points = []
-    for a, b, c, d in [((0, 0), (-12, -13), (-17, -2), (0, 12)), ((0, 12), (17, -2), (12, -13), (0, 0))]:
+    for a, b, c, d in [((-22, 0), (-9, -13), (10, -10), (22, 0)),
+                       ((22, 0), (9, 12), (-11, 9), (-22, 0))]:
         for step in range(16):
             t, u = step / 15, 1 - step / 15
             points.append((u**3 * a[0] + 3 * u*u*t * b[0] + 3*u*t*t * c[0] + t**3*d[0],
@@ -73,28 +74,45 @@ def petal_shape():
 
 
 RNG = random.Random(42)
-PETALS = [(RNG.uniform(0, WIDTH), RNG.uniform(0, HEIGHT + 40), RNG.uniform(.35, .8), RNG.uniform(0, math.tau)) for _ in range(28)]
-PETAL = petal_shape()
+LEAF_MARGIN = 60
+WIND_WIDTH = WIDTH + 2 * LEAF_MARGIN
+LEAF_SPACING = WIND_WIDTH / 3
+WIND_SPEED = LEAF_SPACING / SECONDS
+# Repeating lanes let the breeze move slowly and still loop seamlessly.
+LEAF_LANES = [(22 + index * 42, RNG.uniform(.65, 1.0),
+               RNG.uniform(0, math.tau), RNG.uniform(0, LEAF_SPACING))
+              for index in range(7)]
+LEAF = leaf_shape()
 BASE = background()
 
 
 def frame(time):
     image = BASE.copy()
     draw = ImageDraw.Draw(image)
-    for index, (x, y, size, phase) in enumerate(PETALS):
-        angle = phase + time / SECONDS * math.tau
-        cx = x + 22 * math.sin(angle)
-        cy = (y + time / SECONDS * (HEIGHT + 40)) % (HEIGHT + 40) - 20
-        points = [((cx + size * (px * math.cos(angle) - py * math.sin(angle))) * SCALE,
-                   (cy + size * (px * math.sin(angle) + py * math.cos(angle))) * SCALE) for px, py in PETAL]
-        draw.polygon(points, fill=["#e72a3c", "#c5192c", "#ff4753"][index % 3])
-    count = visible_characters(time)
-    # Fixed character cells keep the greeting and caret stationary as letters appear.
-    for index, char in enumerate(GREETING[:count]):
-        draw.text(((270 + index * 27) * SCALE, 159 * SCALE), char, font=MONO, fill="#fff5f5", anchor="ls")
-    if time % .8 < .4:
-        x = (270 + count * 27) * SCALE
-        draw.rectangle((x, 121 * SCALE, x + 2 * SCALE, 165 * SCALE), fill="#ff4753")
+    for index, (y, size, phase, offset) in enumerate(LEAF_LANES):
+        for column in range(3):
+            cx = (offset + column * LEAF_SPACING + WIND_SPEED * time) % WIND_WIDTH - LEAF_MARGIN
+            spatial_phase = phase + math.tau * (cx + LEAF_MARGIN) / WIND_WIDTH
+            breeze_phase = phase + math.tau * time / SECONDS
+            cy = y + 9 * math.sin(spatial_phase) + 4 * math.sin(breeze_phase)
+            angle = -.25 + .22 * math.sin(spatial_phase) + .12 * math.sin(breeze_phase)
+            flutter = .8 + .2 * math.sin(breeze_phase + spatial_phase)
+
+            def transform(point):
+                px, py = point[0], point[1] * flutter
+                return ((cx + size * (px * math.cos(angle) - py * math.sin(angle))) * SCALE,
+                        (cy + size * (px * math.sin(angle) + py * math.cos(angle))) * SCALE)
+
+            draw.polygon([transform(point) for point in LEAF],
+                         fill=["#e72a3c", "#c5192c", "#ff4753"][index % 3])
+            draw.line([transform((-27, 0)), transform((18, 0))], fill="#821323", width=SCALE)
+            for vein_x in (-10, -2, 6):
+                for side in (-1, 1):
+                    draw.line([transform((vein_x - 4, 0)), transform((vein_x + 2, side * 5))],
+                              fill="#a51b2d", width=SCALE)
+    brightness = greeting_brightness(time)
+    text_color = tuple(round(channel * brightness) for channel in (255, 245, 245))
+    draw.text((500 * SCALE, 159 * SCALE), GREETING, font=MONO, fill=text_color, anchor="ms")
     return image.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
 
 
@@ -103,7 +121,7 @@ def main():
     palette = frame(3.5).quantize(colors=128, method=Image.Quantize.MEDIANCUT)
     frames = [frame(index / FPS).quantize(palette=palette, dither=Image.Dither.NONE)
               for index in range(FPS * SECONDS)]
-    output = ROOT / "assets" / "red-black-typing.gif"
+    output = ROOT / "assets" / "red-black-banner.gif"
     frames[0].save(output, save_all=True, append_images=frames[1:], duration=1000 // FPS,
                    loop=0, disposal=1, optimize=False)
     print(f"Wrote {output.relative_to(ROOT)} ({output.stat().st_size:,} bytes, {len(frames)} frames)")
