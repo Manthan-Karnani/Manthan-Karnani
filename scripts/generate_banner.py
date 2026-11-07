@@ -75,41 +75,46 @@ def leaf_shape():
 
 RNG = random.Random(42)
 LEAF_MARGIN = 60
-WIND_WIDTH = WIDTH + 2 * LEAF_MARGIN
-LEAF_SPACING = WIND_WIDTH / 3
-WIND_SPEED = LEAF_SPACING / SECONDS
-# Repeating lanes let the breeze move slowly and still loop seamlessly.
-LEAF_LANES = [(22 + index * 42, RNG.uniform(.65, 1.0),
-               RNG.uniform(0, math.tau), RNG.uniform(0, LEAF_SPACING))
-              for index in range(7)]
+FALL_HEIGHT = HEIGHT + 2 * LEAF_MARGIN
+RIGHTWARD_DRIFT = 220
+# Stagger each fall so leaves enter from above and reset below the banner.
+LEAVES = [(RNG.uniform(-RIGHTWARD_DRIFT, WIDTH + LEAF_MARGIN),
+           RNG.random(), RNG.uniform(.65, 1.0), RNG.uniform(0, math.tau))
+          for _ in range(28)]
 LEAF = leaf_shape()
 BASE = background()
+
+
+def leaf_pose(time, leaf):
+    start_x, offset, size, phase = leaf
+    progress = ((time % SECONDS) / SECONDS + offset) % 1
+    sway = phase + 2 * math.tau * progress
+    cx = start_x + RIGHTWARD_DRIFT * progress + 8 * math.sin(sway)
+    cy = -LEAF_MARGIN + FALL_HEIGHT * progress + 4 * math.sin(phase + math.tau * progress)
+    angle = .35 + .35 * math.sin(sway)
+    flutter = .8 + .2 * math.sin(sway + .7)
+    return cx, cy, angle, flutter
 
 
 def frame(time):
     image = BASE.copy()
     draw = ImageDraw.Draw(image)
-    for index, (y, size, phase, offset) in enumerate(LEAF_LANES):
-        for column in range(3):
-            cx = (offset + column * LEAF_SPACING + WIND_SPEED * time) % WIND_WIDTH - LEAF_MARGIN
-            spatial_phase = phase + math.tau * (cx + LEAF_MARGIN) / WIND_WIDTH
-            breeze_phase = phase + math.tau * time / SECONDS
-            cy = y + 9 * math.sin(spatial_phase) + 4 * math.sin(breeze_phase)
-            angle = -.25 + .22 * math.sin(spatial_phase) + .12 * math.sin(breeze_phase)
-            flutter = .8 + .2 * math.sin(breeze_phase + spatial_phase)
+    for index, leaf in enumerate(LEAVES):
+        size = leaf[2]
+        cx, cy, angle, flutter = leaf_pose(time, leaf)
 
-            def transform(point):
-                px, py = point[0], point[1] * flutter
-                return ((cx + size * (px * math.cos(angle) - py * math.sin(angle))) * SCALE,
-                        (cy + size * (px * math.sin(angle) + py * math.cos(angle))) * SCALE)
+        def transform(point):
+            px, py = point[0], point[1] * flutter
+            return ((cx + size * (px * math.cos(angle) - py * math.sin(angle))) * SCALE,
+                    (cy + size * (px * math.sin(angle) + py * math.cos(angle))) * SCALE)
 
-            draw.polygon([transform(point) for point in LEAF],
-                         fill=["#e72a3c", "#c5192c", "#ff4753"][index % 3])
-            draw.line([transform((-27, 0)), transform((18, 0))], fill="#821323", width=SCALE)
-            for vein_x in (-10, -2, 6):
-                for side in (-1, 1):
-                    draw.line([transform((vein_x - 4, 0)), transform((vein_x + 2, side * 5))],
-                              fill="#a51b2d", width=SCALE)
+        draw.polygon([transform(point) for point in LEAF],
+                     fill=["#e72a3c", "#c5192c", "#ff4753"][index % 3])
+        draw.line([transform((-27, 0)), transform((18, 0))], fill="#821323", width=SCALE)
+        for vein_x in (-10, -2, 6):
+            for side in (-1, 1):
+                draw.line([transform((vein_x - 4, 0)), transform((vein_x + 2, side * 5))],
+                          fill="#a51b2d", width=SCALE)
     brightness = greeting_brightness(time)
     text_color = tuple(round(channel * brightness) for channel in (255, 245, 245))
     draw.text((500 * SCALE, 159 * SCALE), GREETING, font=MONO, fill=text_color, anchor="ms")
